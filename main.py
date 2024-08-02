@@ -3,14 +3,14 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
 
-# Database setup
-DATABASE_URL = 'sqlite:///warehouse.db'  # SQLite database file
-engine = create_engine(DATABASE_URL, echo=True)  # Echo=True to log SQL queries
+
+DATABASE_URL = 'sqlite:///warehouse.db'  
+engine = create_engine(DATABASE_URL, echo=True) 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
-# Models
+
 class Worker(Base):
     __tablename__ = 'workers'
     
@@ -32,7 +32,7 @@ class Attendance(Base):
     worker_id = Column(Integer, ForeignKey('workers.id'))
     date = Column(Date, index=True)
 
-    # Define relationship to Worker
+ 
     worker = relationship("Worker", back_populates="attendances")
 
 
@@ -122,6 +122,106 @@ def add_sold_products():
     except Exception as e:
         print(f"Xatolik yuz berdi: {e}")
 
+from datetime import datetime, timedelta
+
+def get_salary():
+    options = ("1. Kunlik (Ma'lum bir sanadagi maosh)\n"
+               "2. Kunlik (Bugungi maosh)\n"
+               "3. Haftalik\n"
+               "4. Oylik")
+    print(options)
+    
+    def get_custom_salary(date=None, week=False, month=False):
+        cash_per_product = 3000
+        try:
+            # Use current date if no date is provided
+            if date is None:
+                date_input = input("Iltimos sanani kiriting (Masalan: 2024-12-12)\n>>>")
+                date = datetime.strptime(date_input, '%Y-%m-%d').date()
+            
+            with SessionLocal() as session:
+                # Determine the date range for weekly or monthly calculations
+                if week:
+                    end_date = datetime.now().date()
+                    start_date = end_date - timedelta(days=7)
+                elif month:
+                    end_date = datetime.now().date()
+                    start_date = end_date - timedelta(days=30)  # Changed from 31 to 30 for simplicity
+                else:
+                    start_date = date
+                    end_date = date
+
+                # Query the total number of products sold in the date range
+                sold_records = session.query(SoldProductsCount).filter(SoldProductsCount.date.between(start_date, end_date)).all()
+                total_products_count = sum(record.products_count for record in sold_records)
+                total_earnings = total_products_count * cash_per_product
+
+                # Query workers who attended in the date range
+                workers = session.query(Worker).join(Attendance).filter(Attendance.date.between(start_date, end_date)).distinct().all()
+
+                if not workers:
+                    print("Bu sanada ishchilar mavjud emas.")
+                    return
+
+                salary_per_worker = total_earnings / len(workers)
+                
+                for worker in workers:
+                    worker.maosh = salary_per_worker
+                    print(f"Ishchi {worker.ism.title()} {worker.familiya.title()}ning maoshi: {worker.maosh:.2f}")
+                
+                session.commit()
+
+        except ValueError:
+            print("Sanani to'g'ri formatda kiriting (YYYY-MM-DD).")
+        except Exception as e:
+            print(f"Xatolik yuz berdi: {e}")
+    
+    def get_current_daily_salary():
+        get_custom_salary()
+
+    def get_weekly_salary():
+        get_custom_salary(week=True)
+
+    def get_monthly_salary():
+        get_custom_salary(month=True)
+    
+    # Add your menu logic here to call the appropriate functions
+    choice = input("Tanlovingizni kiriting:\n>>>")
+    if choice == '1':
+        get_custom_salary()
+    elif choice == '2':
+        get_current_daily_salary()
+    elif choice == '3':
+        get_weekly_salary()
+    elif choice == '4':
+        get_monthly_salary()
+    else:
+        print("Noto'g'ri tanlov!")
+
+
+
+
+    while True:
+        print(options)
+        choice = input("Iltimos ro'yxatdan birini tanlang: (Yoki, dasturni to'xtatish uchun 'exit' buyrug'ini kiriting!)\n>>>")
+
+        if choice == "1":
+            get_custom_salary()
+            break
+        elif choice == "2":
+            get_current_daily_salary()
+            break
+        elif choice == "3":
+            get_weekly_salary()
+            break
+        elif choice == "4":
+            get_monthly_salary()
+            break
+        elif choice.lower() == "exit":
+            print("Siz dasturni to'xtatdinggiz! Tashrifinggiz uchun rahmat🤗")
+            break
+        else:
+            print("Iltimos, qayta urinib ko'ring!")
 
 def main():
     options = f"1.Kelgan ishchilarni kiritish.\n2.Chiqarilgan maxsulotlar sonini qo'shish.\n3.Yangi ishchi qo'shish\n4.Ishchilar ro'yhatini ko'ish.\n5.Maosh"
@@ -139,7 +239,7 @@ def main():
         elif choice == "4":
             get_workers()
         elif choice == "5":
-            pass
+            get_salary()
         elif choice.lower() == "exit":
             print("Siz dasturni to'xtatdinggiz! Tashrifinggiz uchun rahmat🤗")
             break
