@@ -1,14 +1,16 @@
-from sqlalchemy import create_engine, Column, Integer, String, Float, Date, ForeignKey
+from sqlalchemy import create_engine, Column, Integer, String, Float, Date, ForeignKey, Double
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
-from datetime import datetime
+from datetime import datetime, timedelta
+from sqlalchemy import func
+import json
 
 
 DATABASE_URL = 'sqlite:///warehouse.db'  
 engine = create_engine(DATABASE_URL, echo=True) 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
-
+PAYMENT = 300
 
 
 class Worker(Base):
@@ -17,7 +19,6 @@ class Worker(Base):
     id = Column(Integer, primary_key=True, index=True)
     ism = Column(String, index=True)
     familiya = Column(String, index=True)
-    maosh = Column(Float, nullable=True)
 
     attendances = relationship("Attendance", back_populates="worker")
     
@@ -31,10 +32,7 @@ class Attendance(Base):
     id = Column(Integer, primary_key=True, index=True)
     worker_id = Column(Integer, ForeignKey('workers.id'))
     date = Column(Date, index=True)
-
- 
     worker = relationship("Worker", back_populates="attendances")
-
 
 class SoldProductsCount(Base):
     __tablename__ = 'sold_products_counts'
@@ -91,10 +89,10 @@ def get_workers():
 
 def insert_attendance():
     name = input("Iltimos ishchining ismini kiriting\n>>>")
+    
     try:
         with SessionLocal() as session:
             worker = session.query(Worker).filter_by(ism=name.lower()).first()
-            
             if worker:
                 date = datetime.now().date()
                 new_attendance = Attendance(worker_id=worker.id, date=date)
@@ -122,106 +120,95 @@ def add_sold_products():
     except Exception as e:
         print(f"Xatolik yuz berdi: {e}")
 
-from datetime import datetime, timedelta
-
 def get_salary():
-    options = ("1. Kunlik (Ma'lum bir sanadagi maosh)\n"
-               "2. Kunlik (Bugungi maosh)\n"
-               "3. Haftalik\n"
-               "4. Oylik")
-    print(options)
+    options = "1.Bugungi\n2.Sana Orqali"
     
-    def get_custom_salary(date=None, week=False, month=False):
-        cash_per_product = 3000
-        try:
-            # Use current date if no date is provided
-            if date is None:
-                date_input = input("Iltimos sanani kiriting (Masalan: 2024-12-12)\n>>>")
-                date = datetime.strptime(date_input, '%Y-%m-%d').date()
+    def calculate_salary(date: datetime.date = datetime.now().date()):
+        with SessionLocal() as session:
+            total_sold = session.query(func.sum(SoldProductsCount.product_count)).filter(SoldProductsCount.date == date).scalar() or 0
+            attendance_records = session.query(Attendance).filter_by(date=date).all()
+            workers_today = len(attendance_records)
             
-            with SessionLocal() as session:
-                # Determine the date range for weekly or monthly calculations
-                if week:
-                    end_date = datetime.now().date()
-                    start_date = end_date - timedelta(days=7)
-                elif month:
-                    end_date = datetime.now().date()
-                    start_date = end_date - timedelta(days=30)  # Changed from 31 to 30 for simplicity
-                else:
-                    start_date = date
-                    end_date = date
-
-                # Query the total number of products sold in the date range
-                sold_records = session.query(SoldProductsCount).filter(SoldProductsCount.date.between(start_date, end_date)).all()
-                total_products_count = sum(record.products_count for record in sold_records)
-                total_earnings = total_products_count * cash_per_product
-
-                # Query workers who attended in the date range
-                workers = session.query(Worker).join(Attendance).filter(Attendance.date.between(start_date, end_date)).distinct().all()
-
-                if not workers:
-                    print("Bu sanada ishchilar mavjud emas.")
-                    return
-
-                salary_per_worker = total_earnings / len(workers)
-                
-                for worker in workers:
-                    worker.maosh = salary_per_worker
-                    print(f"Ishchi {worker.ism.title()} {worker.familiya.title()}ning maoshi: {worker.maosh:.2f}")
-                
-                session.commit()
-
-        except ValueError:
-            print("Sanani to'g'ri formatda kiriting (YYYY-MM-DD).")
-        except Exception as e:
-            print(f"Xatolik yuz berdi: {e}")
+            if workers_today > 0:
+                earned_money = (total_sold / workers_today) * PAYMENT
+                print(f"{date} sana uchun jami sotilgan maxsulotlar soni: {total_sold}")
+                print(f"{date} sana uchun ishchilar soni: {workers_today}")
+                print(f"Har bir ishchi uchun to'lanadigan maosh: {earned_money:.2f} so'm")
+            else:
+                print(f"{date} sana uchun hech qanday ishtirokchi mavjud emas.")
     
-    def get_current_daily_salary():
-        get_custom_salary()
+    def calculate_salary_for_range():
+        def get_dates_in_range(start_date_str: str, end_date_str: str) -> list:
+            try:
+                start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
+                end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
+                
+                if start_date > end_date:
+                    raise ValueError("End date must be after or the same as start date.")
+                
+                date_list = [start_date + timedelta(days=x) for x in range((end_date - start_date).days + 1)]
+                return date_list
 
-    def get_weekly_salary():
-        get_custom_salary(week=True)
+            except ValueError as e:
+                print(f"Error: {e}")
+                return []
 
-    def get_monthly_salary():
-        get_custom_salary(month=True)
-    
-    # Add your menu logic here to call the appropriate functions
-    choice = input("Tanlovingizni kiriting:\n>>>")
-    if choice == '1':
-        get_custom_salary()
-    elif choice == '2':
-        get_current_daily_salary()
-    elif choice == '3':
-        get_weekly_salary()
-    elif choice == '4':
-        get_monthly_salary()
-    else:
-        print("Noto'g'ri tanlov!")
-
-
-
+        start_date = input("Boshlanish kuni (YYYY-MM-DD): ")
+        end_date = input("Tugash sanasi (YYYY-MM-DD): ")
+        
+        dates = get_dates_in_range(start_date, end_date)
+        daily_info = {}
+        income = {}
+        
+        with SessionLocal() as session:
+            for date in dates:
+                day = date.strftime("%Y-%m-%d")
+                total_sold = session.query(func.sum(SoldProductsCount.product_count)).filter(SoldProductsCount.date == day).scalar() or 0
+                attendance_records = session.query(Attendance).filter_by(date=day).all()
+                workers_attended = len(attendance_records)
+                
+                if workers_attended > 0:
+                    earned_money = (total_sold / workers_attended) * PAYMENT
+                    daily_info[day] = {
+                        "earned_money": earned_money,
+                        "workers": [session.query(Worker).filter_by(id=record.worker_id).first().ism for record in attendance_records],
+                        "total_sold": total_sold,
+                    }
+                    for worker in daily_info[day]["workers"]:
+                        if worker in income:
+                            income[worker] += earned_money
+                        else:
+                            income[worker] = earned_money
+        
+        try:
+            data = {
+                "daily_info": daily_info,
+                "income": income
+            }
+            with open('data.json', 'w') as file:
+                json.dump(data, file, indent=4)
+            print("Data has been written to data.json")
+        except IOError as e:
+            print(f"Error writing to file: {e}")
+        except TypeError as e:
+            print(f"Error serializing data: {e}")
 
     while True:
         print(options)
         choice = input("Iltimos ro'yxatdan birini tanlang: (Yoki, dasturni to'xtatish uchun 'exit' buyrug'ini kiriting!)\n>>>")
 
         if choice == "1":
-            get_custom_salary()
+            calculate_salary(date=datetime.now().date())
             break
         elif choice == "2":
-            get_current_daily_salary()
-            break
-        elif choice == "3":
-            get_weekly_salary()
-            break
-        elif choice == "4":
-            get_monthly_salary()
+            calculate_salary_for_range()
             break
         elif choice.lower() == "exit":
             print("Siz dasturni to'xtatdinggiz! Tashrifinggiz uchun rahmat🤗")
             break
         else:
-            print("Iltimos, qayta urinib ko'ring!")
+            print("Iltimos, qayta urinib ko'ring.")
+
 
 def main():
     options = f"1.Kelgan ishchilarni kiritish.\n2.Chiqarilgan maxsulotlar sonini qo'shish.\n3.Yangi ishchi qo'shish\n4.Ishchilar ro'yhatini ko'ish.\n5.Maosh"
